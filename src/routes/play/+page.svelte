@@ -96,7 +96,9 @@
 		const key = `${levelIndex}-${stepIndex}`;
 		if (!Number.isInteger(saved.puzzleMap[key])) {
 			const pool = saved.puzzleSeeds[levelIndex];
-			saved.puzzleMap[key] = Math.floor(Math.random() * pool.length);
+			const used = new Set(Object.entries(saved.puzzleMap).filter(([k]) => k.startsWith(`${levelIndex}-`)).map(([, v]) => v));
+			const available = pool.map((_, i) => i).filter(i => !used.has(i));
+			saved.puzzleMap[key] = available.length > 0 ? available[Math.floor(Math.random() * available.length)] : Math.floor(Math.random() * pool.length);
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
 		}
 	}
@@ -107,6 +109,52 @@
 		const pool = saved.puzzleSeeds[levelIndex];
 		const index = saved.puzzleMap[`${levelIndex}-${stepIndex}`];
 		return pool[index] ?? (index + 1000 + levelIndex * 97);
+	}
+
+	function deduplicatePuzzles() {
+		const saved = readSavedState();
+		if (!saved.puzzleMap) return;
+		const changed = [];
+		for (let li = 0; li < levels.length; li++) {
+			const prefix = `${li}-`;
+			const entries = Object.entries(saved.puzzleMap).filter(([k]) => k.startsWith(prefix));
+			const seedToSteps = {};
+			for (const [key, idx] of entries) {
+				const stepIdx = parseInt(key.slice(prefix.length), 10);
+				if (isNaN(stepIdx)) continue;
+				const seed = saved.puzzleSeeds?.[li]?.[idx];
+				if (seed === undefined) continue;
+				if (!seedToSteps[seed]) seedToSteps[seed] = [];
+				seedToSteps[seed].push(stepIdx);
+			}
+			for (const steps of Object.values(seedToSteps)) {
+				if (steps.length <= 1) continue;
+				// Keep the lowest step, replace the higher ones
+				const keep = Math.min(...steps);
+				for (const dup of steps) {
+					if (dup === keep) continue;
+					const key = `${li}-${dup}`;
+					const pool = saved.puzzleSeeds[li];
+					const used = new Set(Object.entries(saved.puzzleMap).filter(([k]) => k !== key && k.startsWith(prefix)).map(([, v]) => v));
+					const available = pool.map((_, i) => i).filter(i => !used.has(i));
+					saved.puzzleMap[key] = available.length > 0 ? available[Math.floor(Math.random() * available.length)] : Math.floor(Math.random() * pool.length);
+					// Unmark from completed
+					if (saved.completed?.[li]?.includes(dup)) {
+						saved.completed[li] = saved.completed[li].filter(s => s !== dup);
+					}
+					// Clear saved board for this step
+					const bKey = `${li}-${dup}`;
+					if (saved.boards) delete saved.boards[bKey];
+					if (saved.errors) delete saved.errors[bKey];
+					if (saved.errorCells) delete saved.errorCells[bKey];
+					changed.push({ level: li, step: dup });
+				}
+			}
+		}
+		if (changed.length > 0) {
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+		}
+		return changed;
 	}
 
 	function generateSolution(levelIndex, stepIndex) {
@@ -348,6 +396,16 @@
 		}
 		// Ensure level is unlocked
 		while (level > 0 && (completed[level - 1] || []).length < 5) level--;
+
+		// Deduplicate puzzles: if two steps share the same seed, regenerate the later one
+		const deduped = deduplicatePuzzles();
+		if (deduped && deduped.length > 0) {
+			// Re-read saved state after dedup to get updated completed
+			const freshSaved = readSavedState();
+			if (Array.isArray(freshSaved.completed)) {
+				completed = freshSaved.completed.map((a) => (Array.isArray(a) ? [...a] : []));
+			}
+		}
 
 		// Determine step: the first uncompleted puzzle (0-4)
 		const done = completed[level] || [];
