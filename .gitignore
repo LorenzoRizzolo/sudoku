@@ -1,0 +1,33 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+sessions
+puntozero.db-shm
+puntozero.db-wal
+puntozero.db
+dati/
+
+export.json
+export_foto.ndjson
+backup_puntozero.db
