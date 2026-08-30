@@ -421,7 +421,7 @@
 	<div class="app-shell">
 		<header class="topbar">
 			<a class="brand" href="/" aria-label="Sudoku Studio home">
-				<span class="brand-mark">9</span>
+				<img src="/logo.png" alt="Logo" class="logo">
 				<span>Sudoku<span class="muted">Studio</span></span>
 			</a>
 			<div class="top-actions">
@@ -675,7 +675,7 @@
 		padding: 0 6vw;
 	}
 	.topbar {
-		height: 92px;
+		height: 192px;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -1237,6 +1237,11 @@
 		right: 17px;
 		font-size: 18px;
 	}
+	.logo{
+		width: 100px;
+		height: 100px;
+		border-radius: 9px;
+	}
 	@media (max-width: 850px) {
 		.app-shell {
 			padding: 0 5vw;
@@ -1276,7 +1281,7 @@
 	}
 	@media (max-width: 500px) {
 		.topbar {
-			height: 74px;
+			height: 150px;
 		}
 		.saved {
 			display: none;
