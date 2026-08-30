@@ -1,9 +1,10 @@
 <script>
-	import { onMount, tick } from "svelte";
+	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 
 	const STORAGE_KEY = "sudoku-studio-progress-v2";
 	const PUZZLE_POOL_PER_LEVEL = 150;
+	const MAX_ERRORS = 3;
 	const levels = [
 		{ name: "Beginner", subtitle: "A gentle warm-up", color: "#8bd3a8", clues: 48 },
 		{ name: "Easy", subtitle: "Build your rhythm", color: "#7ec8e3", clues: 44 },
@@ -29,18 +30,19 @@
 	let step = $state(0);
 	let board = $state([]);
 	let fixed = $state([]);
-	let currentSolution = $state(base);
-	let completed = $state(Array(6).fill(0).map(() => []));
+	let currentSolution = $state([]);
+	let completed = $state(Array.from({ length: 6 }, () => []));
 	let selected = $state(null);
 	let message = $state("");
 	let errors = $state(0);
 	let errorCells = $state([]);
 	let showHelp = $state(false);
 	let hydrated = $state(false);
-	let puzzleSeeds = $state({});
 	let winPulse = $state(false);
 	let losePulse = $state(false);
 	let highlightedNumber = $state(null);
+
+	// ── localStorage helpers ──
 
 	function readSavedState() {
 		if (typeof localStorage === "undefined") return {};
@@ -51,48 +53,16 @@
 		}
 	}
 
-	function getPuzzlePool(levelIndex) {
-		const saved = readSavedState();
-		saved.puzzleSeeds = saved.puzzleSeeds || {};
-		if (
-			!Array.isArray(saved.puzzleSeeds[levelIndex]) ||
-			saved.puzzleSeeds[levelIndex].length !== PUZZLE_POOL_PER_LEVEL
-		) {
-			saved.puzzleSeeds[levelIndex] = Array.from(
-				{ length: PUZZLE_POOL_PER_LEVEL },
-				(_, index) => {
-					const value = (levelIndex + 1) * 131071 + index * 8191 + Math.floor(Math.random() * 1000000);
-					return value >>> 0;
-				},
-			);
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-		}
-		puzzleSeeds = saved.puzzleSeeds;
-		return saved.puzzleSeeds[levelIndex];
+	function writeSavedState(patch) {
+		const current = readSavedState();
+		const merged = { ...current, ...patch };
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
 	}
 
-	function ensurePuzzleDataset() {
-		for (let levelIndex = 0; levelIndex < levels.length; levelIndex += 1) {
-			getPuzzlePool(levelIndex);
-		}
-		return puzzleSeeds;
-	}
-
-	function getPuzzleSeed(levelIndex, stepIndex) {
-		ensurePuzzleDataset();
-		const pool = getPuzzlePool(levelIndex);
-		const saved = readSavedState();
-		saved.puzzleMap = saved.puzzleMap || {};
-		const key = `${levelIndex}-${stepIndex}`;
-		if (!Number.isInteger(saved.puzzleMap[key])) {
-			saved.puzzleMap[key] = Math.floor(Math.random() * pool.length);
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-		}
-		return saved.puzzleMap[key];
-	}
+	// ── puzzle generation ──
 
 	function seededRandom(seed) {
-		let value = seed;
+		let value = seed >>> 0;
 		return () => {
 			value = (value * 9301 + 49297) % 233280;
 			return value / 233280;
@@ -101,61 +71,83 @@
 
 	function shuffled(values, random) {
 		const result = [...values];
-		for (let index = result.length - 1; index > 0; index -= 1) {
-			const swapIndex = Math.floor(random() * (index + 1));
-			[result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+		for (let i = result.length - 1; i > 0; i--) {
+			const j = Math.floor(random() * (i + 1));
+			[result[i], result[j]] = [result[j], result[i]];
 		}
 		return result;
 	}
 
-	function solutionFor(levelIndex, stepIndex) {
-		const pool = getPuzzlePool(levelIndex);
-		const seedIndex = getPuzzleSeed(levelIndex, stepIndex);
-		const seed = pool[seedIndex] ?? seedIndex + 1000 + levelIndex * 97;
-		const random = seededRandom(seed);
-		const numbers = shuffled([1, 2, 3, 4, 5, 6, 7, 8, 9], random);
-		const bands = shuffled([0, 1, 2], random);
-		const rows = bands.flatMap((band) =>
-			shuffled([0, 1, 2], random).map((row) => band * 3 + row),
-		);
-		const stacks = shuffled([0, 1, 2], random);
-		const columns = stacks.flatMap((stack) =>
-			shuffled([0, 1, 2], random).map((column) => stack * 3 + column),
-		);
-		return rows.map((row) =>
-			columns.map((column) => numbers[base[row][column] - 1]),
-		);
+	function ensurePuzzlePool(levelIndex) {
+		const saved = readSavedState();
+		if (!saved.puzzleSeeds) saved.puzzleSeeds = {};
+		if (!Array.isArray(saved.puzzleSeeds[levelIndex]) || saved.puzzleSeeds[levelIndex].length !== PUZZLE_POOL_PER_LEVEL) {
+			saved.puzzleSeeds[levelIndex] = Array.from({ length: PUZZLE_POOL_PER_LEVEL }, (_, i) => {
+				return (((levelIndex + 1) * 131071 + i * 8191 + Math.floor(Math.random() * 1000000)) >>> 0);
+			});
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+		}
 	}
 
-	function puzzleFor(levelIndex, stepIndex) {
+	function ensurePuzzleMapKey(levelIndex, stepIndex) {
+		const saved = readSavedState();
+		if (!saved.puzzleMap) saved.puzzleMap = {};
+		const key = `${levelIndex}-${stepIndex}`;
+		if (!Number.isInteger(saved.puzzleMap[key])) {
+			ensurePuzzlePool(levelIndex);
+			const pool = saved.puzzleSeeds[levelIndex];
+			saved.puzzleMap[key] = Math.floor(Math.random() * pool.length);
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+		}
+	}
+
+	function getPuzzleSeed(levelIndex, stepIndex) {
+		ensurePuzzleMapKey(levelIndex, stepIndex);
+		const saved = readSavedState();
+		const pool = saved.puzzleSeeds[levelIndex];
+		const index = saved.puzzleMap[`${levelIndex}-${stepIndex}`];
+		return pool[index] ?? (index + 1000 + levelIndex * 97);
+	}
+
+	function generateSolution(levelIndex, stepIndex) {
+		const seed = getPuzzleSeed(levelIndex, stepIndex);
+		const rand = seededRandom(seed);
+		const numbers = shuffled([1, 2, 3, 4, 5, 6, 7, 8, 9], rand);
+		const bands = shuffled([0, 1, 2], rand);
+		const rows = bands.flatMap((b) => shuffled([0, 1, 2], rand).map((r) => b * 3 + r));
+		const stacks = shuffled([0, 1, 2], rand);
+		const cols = stacks.flatMap((s) => shuffled([0, 1, 2], rand).map((c) => s * 3 + c));
+		return rows.map((r) => cols.map((c) => numbers[base[r][c] - 1]));
+	}
+
+	function generatePuzzle(levelIndex, stepIndex) {
+		const solution = generateSolution(levelIndex, stepIndex);
 		const clueCount = levels[levelIndex].clues;
-		const pool = getPuzzlePool(levelIndex);
-		const seedIndex = getPuzzleSeed(levelIndex, stepIndex);
-		const seed = pool[seedIndex] ?? seedIndex + 1000 + levelIndex * 97;
-		const random = seededRandom(seed + 12345);
-		const solution = solutionFor(levelIndex, stepIndex);
+		const seed = getPuzzleSeed(levelIndex, stepIndex) + 12345;
+		const rand = seededRandom(seed);
 		const keep = new Set(
-			shuffled(Array.from({ length: 81 }, (_, index) => index), random).slice(0, clueCount),
+			shuffled(Array.from({ length: 81 }, (_, i) => i), rand).slice(0, clueCount)
 		);
-		return solution.map((row, r) =>
-			row.map((value, c) => (keep.has(r * 9 + c) ? value : 0)),
-		);
+		return solution.map((row, r) => row.map((v, c) => (keep.has(r * 9 + c) ? v : 0)));
+	}
+
+	// ── board management ──
+
+	function boardKey() {
+		return `${level}-${step}`;
 	}
 
 	function loadPuzzle() {
-		ensurePuzzleDataset();
-		const puzzle = puzzleFor(level, step);
-		currentSolution = solutionFor(level, step);
-		fixed = puzzle.map((row) => row.map((value) => value !== 0));
+		const puzzle = generatePuzzle(level, step);
+		currentSolution = generateSolution(level, step);
+		fixed = puzzle.map((row) => row.map((v) => v !== 0));
+
 		const saved = readSavedState();
-		saved.boards = saved.boards || {};
-		saved.errors = saved.errors || {};
-		saved.errorCells = saved.errorCells || {};
-		const key = `${level}-${step}`;
-		if (Array.isArray(saved.boards[key])) {
+		const key = boardKey();
+		if (saved.boards && Array.isArray(saved.boards[key])) {
 			board = saved.boards[key].map((row) => [...row]);
-			errors = typeof saved.errors[key] === "number" ? saved.errors[key] : 0;
-			errorCells = Array.isArray(saved.errorCells[key]) ? [...saved.errorCells[key]] : [];
+			errors = typeof saved.errors?.[key] === "number" ? saved.errors[key] : 0;
+			errorCells = Array.isArray(saved.errorCells?.[key]) ? [...saved.errorCells[key]] : [];
 		} else {
 			board = puzzle.map((row) => [...row]);
 			errors = 0;
@@ -169,77 +161,81 @@
 		hydrated = true;
 	}
 
-	function save() {
+	function persistBoard() {
 		const saved = readSavedState();
-		saved.level = level;
-		saved.step = step;
-		saved.completed = completed.map((arr) => [...arr]);
-		saved.boards = saved.boards || {};
-		saved.errors = saved.errors || {};
-		saved.errorCells = saved.errorCells || {};
-		const key = `${level}-${step}`;
+		if (!saved.boards) saved.boards = {};
+		if (!saved.errors) saved.errors = {};
+		if (!saved.errorCells) saved.errorCells = {};
+		const key = boardKey();
 		saved.boards[key] = board.map((row) => [...row]);
 		saved.errors[key] = errors;
 		saved.errorCells[key] = [...errorCells];
+		saved.level = level;
+		saved.step = step;
+		saved.completed = completed.map((a) => [...a]);
 		saved.lastSaved = Date.now();
 		localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
 	}
 
-	function countNumberOnBoard(number) {
-		return board.flat().filter((value) => value === number).length;
+	function clearBoardState() {
+		const saved = readSavedState();
+		const key = boardKey();
+		if (saved.boards) delete saved.boards[key];
+		if (saved.errors) delete saved.errors[key];
+		if (saved.errorCells) delete saved.errorCells[key];
+		saved.level = level;
+		saved.step = step;
+		saved.completed = completed.map((a) => [...a]);
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
 	}
 
-	function selectCell(row, col) {
-		selected = { row, col };
-		if (fixed[row][col]) {
-			highlightedNumber = board[row][col] || null;
-		} else {
-			highlightedNumber = board[row][col] || null;
-		}
-		if (errorCells.includes(`${row}-${col}`)) {
-			highlightedNumber = null;
-		}
+	// ── game actions ──
+
+	function countNumberOnBoard(num) {
+		return board.flat().filter((v) => v === num).length;
 	}
 
-	function enterNumber(number) {
+	function selectCell(r, c) {
+		selected = { row: r, col: c };
+		highlightedNumber = fixed[r][c] ? board[r][c] || null : board[r][c] || null;
+		if (errorCells.includes(`${r}-${c}`)) highlightedNumber = null;
+	}
+
+	function enterNumber(num) {
 		if (!selected || fixed[selected.row][selected.col]) return;
-		if (countNumberOnBoard(number) >= 9 && board[selected.row][selected.col] !== number) {
-			return;
-		}
+		if (countNumberOnBoard(num) >= 9 && board[selected.row][selected.col] !== num) return;
+
 		const key = `${selected.row}-${selected.col}`;
-		if (
-			number !== currentSolution[selected.row][selected.col] &&
-			board[selected.row][selected.col] !== number
-		) {
-			errors += 1;
+		const isCorrect = num === currentSolution[selected.row][selected.col];
+
+		if (!isCorrect && board[selected.row][selected.col] !== num) {
+			errors++;
 			errorCells = [...new Set([...errorCells, key])];
 			highlightedNumber = null;
-			message =
-				errors >= 3
-					? "Three errors — restarting this puzzle…"
-					: `Incorrect number. ${3 - errors} ${3 - errors === 1 ? "life" : "lives"} left.`;
+			if (errors >= MAX_ERRORS) {
+				message = "Three errors — restarting this puzzle…";
+				losePulse = true;
+				board[selected.row][selected.col] = num;
+				board = board.map((row) => [...row]);
+				persistBoard();
+				setTimeout(() => { losePulse = false; }, 600);
+				setTimeout(() => { resetPuzzle(); }, 900);
+				return;
+			}
+			const lives = MAX_ERRORS - errors;
+			message = `Incorrect number. ${lives} ${lives === 1 ? "life" : "lives"} left.`;
 		} else {
-			errorCells = errorCells.filter((cell) => cell !== key);
-			highlightedNumber = number;
+			errorCells = errorCells.filter((c) => c !== key);
+			highlightedNumber = num;
 			message = "";
 		}
-		board[selected.row][selected.col] = number;
+
+		board[selected.row][selected.col] = num;
 		board = board.map((row) => [...row]);
-		save();
-		if (errors >= 3) {
-			losePulse = true;
-			window.alert("Three mistakes — this puzzle is restarting.");
-			setTimeout(() => {
-				losePulse = false;
-			}, 600);
-			setTimeout(resetPuzzle, 900);
-			return;
-		}
+		persistBoard();
+
 		if (!board.some((row) => row.includes(0))) {
-			const solved = checkPuzzle();
-			if (solved && errors < 3) {
-				advanceToNextPuzzle();
-			}
+			tryAutoComplete();
 		}
 	}
 
@@ -248,117 +244,121 @@
 		const key = `${selected.row}-${selected.col}`;
 		board[selected.row][selected.col] = 0;
 		board = board.map((row) => [...row]);
-		errorCells = errorCells.filter((cell) => cell !== key);
+		errorCells = errorCells.filter((c) => c !== key);
 		message = "";
-		save();
+		persistBoard();
 	}
 
 	function resetPuzzle() {
-		const puzzle = puzzleFor(level, step);
-		const saved = readSavedState();
-		saved.boards = saved.boards || {};
-		saved.errors = saved.errors || {};
-		saved.errorCells = saved.errorCells || {};
-		const key = `${level}-${step}`;
-		delete saved.boards[key];
-		delete saved.errors[key];
-		delete saved.errorCells[key];
+		const puzzle = generatePuzzle(level, step);
 		board = puzzle.map((row) => [...row]);
 		errors = 0;
 		errorCells = [];
 		message = "Fresh start — you have three new chances.";
 		winPulse = false;
 		losePulse = false;
-		save();
+		selected = null;
+		highlightedNumber = null;
+		clearBoardState();
 	}
 
-	function checkPuzzle() {
+	function tryAutoComplete() {
 		const wrong = board.some((row, r) =>
-			row.some((value, c) => value !== currentSolution[r][c]),
+			row.some((v, c) => v !== currentSolution[r][c])
 		);
-		const incomplete = board.some((row) => row.includes(0));
-		if (incomplete) {
-			message = "Almost there — fill every square before checking.";
-			return false;
-		}
 		if (wrong) {
 			message = "Not quite. Check the highlighted clues and try again.";
 			losePulse = true;
 			setTimeout(() => { losePulse = false; }, 600);
-			return false;
+			return;
 		}
-		// Puzzle is complete and correct
-		if (!completed[level].includes(step))
+		// Puzzle solved!
+		if (!completed[level].includes(step)) {
 			completed[level] = [...completed[level], step].sort((a, b) => a - b);
+		}
 		message = "Perfect! Puzzle complete.";
 		winPulse = true;
-		losePulse = false;
-		completed[level].push(step);
-		completed[level] = [...new Set(completed[level])].sort();
-		step++;
-		save();
-		advanceToNextPuzzle();
-		return true;
+		persistBoard();
+
+		setTimeout(() => {
+			advanceToNextPuzzle();
+		}, 1200);
 	}
 
-	async function advanceToNextPuzzle() {
-		// Wait for win animation
-		await new Promise((resolve) => setTimeout(resolve, 1200));
-
-		const completedCount = completed[level].length;
-		let nextLevel = level;
-		let nextStep = step;
-
-		if (completedCount >= 5 && level < 5) {
-			nextLevel = level + 1;
-			nextStep = 0;
-		} else if (completedCount <= 5) {
-			nextStep = completedCount+1;
+	function advanceToNextPuzzle() {
+		// Determine next level/step
+		if (completed[level].length >= 5 && level < levels.length - 1) {
+			level++;
+			step = 0;
 		} else {
-			nextStep = 0;
+			// Find first uncompleted step for current level
+			const done = completed[level] || [];
+			step = 0;
+			while (step < 5 && done.includes(step)) step++;
+			if (step >= 5) step = 0;
 		}
 
-		level = nextLevel;
-		step = Math.min(nextStep, 4);
-		message = "";
-		errorCells = [];
-		errors = 0;
-		selected = null;
-		highlightedNumber = null;
 		winPulse = false;
 		losePulse = false;
-		console.log("loading next puzzle", nextLevel, nextStep);
+		message = "";
 		loadPuzzle();
-		save();
+		persistBoard();
 	}
 
+	function goToStep(newStep) {
+		if (newStep < 0 || newStep > 4) return;
+		step = newStep;
+		winPulse = false;
+		losePulse = false;
+		message = "";
+		loadPuzzle();
+		persistBoard();
+	}
+
+	function prevPuzzle() {
+		if (step > 0) goToStep(step - 1);
+	}
+
+	function nextPuzzle() {
+		if (step < 4) goToStep(step + 1);
+	}
+
+	function handleKey(e) {
+		if (e.key >= "1" && e.key <= "9") enterNumber(Number(e.key));
+		if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") clearCell();
+	}
+
+	// ── init ──
+
 	onMount(() => {
-		const urlParams = new URLSearchParams(window.location.search);
-		const levelParam = parseInt(urlParams.get("level"), 10);
+		const params = new URLSearchParams(window.location.search);
+		const paramLevel = parseInt(params.get("level"), 10);
 		const saved = readSavedState();
 
-		if (!isNaN(levelParam) && levelParam >= 0 && levelParam < levels.length) {
-			level = levelParam;
-		} else {
-			level = Math.min(saved.level || 0, 5);
-		}
-		console.log(saved.completed)
-
+		// Restore completed state first
 		if (Array.isArray(saved.completed)) {
-			completed = saved.completed.map((arr) => (Array.isArray(arr) ? [...arr] : []));
+			completed = saved.completed.map((a) => (Array.isArray(a) ? [...a] : []));
 		}
-		step = saved.completed[level].sort().at(-1);
-		while (level > 0 && (completed[level - 1] || []).length < 5) level -= 1;
+
+		// Determine level
+		if (!isNaN(paramLevel) && paramLevel >= 0 && paramLevel < levels.length) {
+			level = paramLevel;
+		} else {
+			level = typeof saved.level === "number" ? Math.min(saved.level, levels.length - 1) : 0;
+		}
+		// Ensure level is unlocked
+		while (level > 0 && (completed[level - 1] || []).length < 5) level--;
+
+		// Determine step: the first uncompleted puzzle (0-4)
+		const done = completed[level] || [];
+		step = 0;
+		while (step < 5 && done.includes(step)) step++;
+		if (step >= 5) step = 0;
+
 		loadPuzzle();
-		checkPuzzle();
 		window.addEventListener("keydown", handleKey);
 		return () => window.removeEventListener("keydown", handleKey);
 	});
-
-	function handleKey(event) {
-		if (event.key >= "1" && event.key <= "9") enterNumber(Number(event.key));
-		if (event.key === "Backspace" || event.key === "Delete" || event.key === "0") clearCell();
-	}
 
 	function backHome() {
 		goto("/");
@@ -371,8 +371,7 @@
 	<div class="app-shell">
 		<header class="topbar">
 			<a class="brand" href="/">
-				<img src="/logo.png" alt="Logo" class="logo">
-				sudoku studio
+				<span class="brand-mark">9</span> sudoku studio
 			</a>
 			<div class="top-actions">
 				<button class="icon-button" aria-label="Help" onclick={() => (showHelp = true)}>?</button>
@@ -382,17 +381,23 @@
 		<main>
 			<div class="game">
 				<div class="game-heading">
-					<h2>
-						{levels[level].name}
-						<span> · Puzzle #{step + 1}</span>
-					</h2>
+					<div class="heading-left">
+						<h2>
+							{levels[level].name}
+							<span> · Puzzle #{step + 1}</span>
+						</h2>
+						<div class="step-nav">
+							<button class="step-arrow" onclick={prevPuzzle} disabled={step === 0}>←</button>
+							<button class="step-arrow" onclick={nextPuzzle} disabled={step === 4}>→</button>
+						</div>
+					</div>
 					<div class="mistakes">
-						Mistakes<span>{errors}</span><strong> / 3</strong>
+						Mistakes<span>{errors}</span><strong> / {MAX_ERRORS}</strong>
 					</div>
 					<div class="step-dots">
 						{#each Array(5) as _, i}
 							<span
-								class:done={i<step}
+								class:done={(completed[level] || []).includes(i)}
 								class:current={i === step}
 							></span>
 						{/each}
@@ -466,7 +471,7 @@
 	<div
 		class="modal-backdrop"
 		role="presentation"
-		onclick={(event) => event.target === event.currentTarget && (showHelp = false)}
+		onclick={(e) => e.target === e.currentTarget && (showHelp = false)}
 	>
 		<div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
 			<button class="close" aria-label="Close" onclick={() => (showHelp = false)}>×</button>
@@ -594,6 +599,36 @@
 		color: #a3b2ac;
 		font-size: 16px;
 		margin-left: 10px;
+	}
+	.heading-left {
+		display: flex;
+		align-items: flex-end;
+		gap: 16px;
+	}
+	.step-nav {
+		display: flex;
+		gap: 4px;
+		padding-bottom: 3px;
+	}
+	.step-arrow {
+		border: 1px solid #d4e0d9;
+		background: transparent;
+		color: #71877d;
+		border-radius: 6px;
+		width: 28px;
+		height: 28px;
+		cursor: pointer;
+		font-size: 14px;
+		display: grid;
+		place-items: center;
+		outline: none;
+	}
+	.step-arrow:hover:not(:disabled) {
+		background: #e8efe8;
+	}
+	.step-arrow:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
 	}
 	.step-dots {
 		display: flex;
@@ -776,16 +811,13 @@
 	.check-button {
 		border: 0;
 		border-radius: 7px;
-		padding: 11px 16px;
+		padding: 11px 13px;
 		background: #1b4235;
 		color: #e0f6ad;
-		font-size: 12px;
+		font-size: 11px;
 		font-weight: 700;
 		cursor: pointer;
 		white-space: nowrap;
-		height: 44px;
-		flex: 1;
-		min-width: 0;
 		outline: none;
 	}
 	.check-button span {
@@ -892,6 +924,7 @@
 		top: 17px;
 		right: 17px;
 		font-size: 18px;
+		outline: none;
 	}
 	@media (max-width: 850px) {
 		.app-shell {

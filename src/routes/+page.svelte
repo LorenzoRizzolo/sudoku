@@ -3,7 +3,6 @@
 	import { goto } from "$app/navigation";
 
 	const STORAGE_KEY = "sudoku-studio-progress-v2";
-
 	const levels = [
 		{ name: "Beginner", subtitle: "A gentle warm-up", color: "#8bd3a8", clues: 48 },
 		{ name: "Easy", subtitle: "Build your rhythm", color: "#7ec8e3", clues: 44 },
@@ -159,7 +158,9 @@
 		</main>
 
 		<footer>
-			<span>Made for quiet moments.</span><span>Everything stays on this device <span class="lock">♢</span></span>
+			<span>Made for quiet moments. <button onclick={()=>{
+				localStorage.removeItem(STORAGE_KEY);
+			}}>Reset progresses</button></span><span>Everything stays on this device <span class="lock">♢</span></span>
 		</footer>
 	</div>
 {:else}
