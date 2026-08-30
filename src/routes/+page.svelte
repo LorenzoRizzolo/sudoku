@@ -253,19 +253,50 @@
 		return board.flat().filter((value) => value === number).length;
 	}
 
+	function isBoardSolved() {
+		return (
+			!board.some((row) => row.includes(0)) &&
+			board.every((row, r) =>
+				row.every((value, c) => value === currentSolution[r][c]),
+			)
+		);
+	}
+
+	function advanceToNextPuzzle() {
+		if (!completed[level].includes(step))
+			completed[level] = [...completed[level], step].sort(
+				(a, b) => a - b,
+			);
+		setTimeout(() => {
+			winPulse = false;
+			if (completed[level].length >= 5 && level < 5) {
+				level += 1;
+				step = 0;
+				loadPuzzle();
+			} else if (completed[level].length < 5) {
+				step = completed[level].length;
+				loadPuzzle();
+			}
+			save();
+		}, 150);
+	}
+
 	function selectCell(row, col) {
 		selected = { row, col };
 		highlightedNumber = board[row][col] || null;
 		if (fixed[row][col]) {
 			highlightedNumber = board[row][col] || null;
 		}
+		if (errorCells.includes(`${row}-${col}`)) {
+			highlightedNumber = null;
+		}
 	}
 
 	function enterNumber(number) {
-		if (countNumberOnBoard(number) >= 9 && board[selected?.row]?.[selected?.col] !== number) {
+		if (!selected || fixed[selected.row][selected.col]) return;
+		if (countNumberOnBoard(number) >= 9 && board[selected.row][selected.col] !== number) {
 			return;
 		}
-		if (!selected || fixed[selected.row][selected.col]) return;
 		const key = `${selected.row}-${selected.col}`;
 		if (
 			number !== currentSolution[selected.row][selected.col] &&
@@ -273,17 +304,18 @@
 		) {
 			errors += 1;
 			errorCells = [...new Set([...errorCells, key])];
+			highlightedNumber = null;
 			message =
 				errors >= 3
 					? "Three errors — restarting this puzzle…"
 					: `Incorrect number. ${3 - errors} ${3 - errors === 1 ? "life" : "lives"} left.`;
 		} else {
 			errorCells = errorCells.filter((cell) => cell !== key);
+			highlightedNumber = number;
 			message = "";
 		}
 		board[selected.row][selected.col] = number;
 		board = board.map((row) => [...row]);
-		highlightedNumber = number;
 		save();
 		if (errors >= 3) {
 			losePulse = true;
@@ -292,6 +324,10 @@
 				losePulse = false;
 			}, 600);
 			setTimeout(resetPuzzle, 900);
+			return;
+		}
+		if (!board.some((row) => row.includes(0))) {
+			checkPuzzle();
 		}
 	}
 
@@ -337,18 +373,6 @@
 		winPulse = true;
 		losePulse = false;
 		save();
-		setTimeout(() => {
-			winPulse = false;
-			if (completed[level].length >= 5 && level < 5) {
-				level += 1;
-				step = 0;
-				loadPuzzle();
-			} else if (completed[level].length < 5) {
-				step = completed[level].length;
-				loadPuzzle();
-			}
-			save();
-		}, 850);
 	}
 
 	function handleKey(event) {
@@ -564,9 +588,15 @@
 							<button class="change-button" onclick={changePuzzle}
 								>Cambia sudoku</button
 							>
-							<button class="check-button" onclick={checkPuzzle}
-								>Check solution <span>→</span></button
-							>
+							{#if isBoardSolved()}
+								<button class="check-button" onclick={advanceToNextPuzzle}
+									>Vai al prossimo sudoku <span>→</span></button
+								>
+							{:else}
+								<button class="check-button" onclick={checkPuzzle}
+									>Check solution <span>→</span></button
+								>
+							{/if}
 						</div>
 					</div>
 					{#if message}<p
