@@ -71,6 +71,9 @@
 	let showHelp = $state(false);
 	let hydrated = $state(false);
 	let puzzleSeeds = $state({});
+	let winPulse = $state(false);
+	let losePulse = $state(false);
+	let highlightedNumber = $state(null);
 
 	function readSavedState() {
 		if (typeof localStorage === "undefined") return {};
@@ -246,11 +249,22 @@
 		save();
 	}
 
+	function countNumberOnBoard(number) {
+		return board.flat().filter((value) => value === number).length;
+	}
+
 	function selectCell(row, col) {
-		if (!fixed[row][col]) selected = { row, col };
+		selected = { row, col };
+		highlightedNumber = board[row][col] || null;
+		if (fixed[row][col]) {
+			highlightedNumber = board[row][col] || null;
+		}
 	}
 
 	function enterNumber(number) {
+		if (countNumberOnBoard(number) >= 9 && board[selected?.row]?.[selected?.col] !== number) {
+			return;
+		}
 		if (!selected || fixed[selected.row][selected.col]) return;
 		const key = `${selected.row}-${selected.col}`;
 		if (
@@ -269,8 +283,16 @@
 		}
 		board[selected.row][selected.col] = number;
 		board = board.map((row) => [...row]);
+		highlightedNumber = number;
 		save();
-		if (errors >= 3) setTimeout(resetPuzzle, 900);
+		if (errors >= 3) {
+			losePulse = true;
+			window.alert("Three mistakes — this puzzle is restarting.");
+			setTimeout(() => {
+				losePulse = false;
+			}, 600);
+			setTimeout(resetPuzzle, 900);
+		}
 	}
 
 	function clearCell() {
@@ -289,6 +311,8 @@
 		errors = 0;
 		errorCells = [];
 		message = "Fresh start — you have three new chances.";
+		winPulse = false;
+		losePulse = false;
 		save();
 	}
 
@@ -310,8 +334,11 @@
 				(a, b) => a - b,
 			);
 		message = "Perfect! Puzzle complete.";
+		winPulse = true;
+		losePulse = false;
 		save();
 		setTimeout(() => {
+			winPulse = false;
 			if (completed[level].length >= 5 && level < 5) {
 				level += 1;
 				step = 0;
@@ -486,7 +513,7 @@
 								></span>{/each}
 						</div>
 					</div>
-					<div class="board-wrap">
+					<div class:win={winPulse} class:lose={losePulse} class="board-wrap">
 						<div
 							class="board"
 							role="grid"
@@ -501,18 +528,9 @@
 										)}
 										class:selected={selected?.row === r &&
 											selected?.col === c}
-										class:related={selected &&
-											(selected.row === r ||
-												selected.col === c ||
-												(Math.floor(
-													selected.row / 3,
-												) === Math.floor(r / 3) &&
-													Math.floor(
-														selected.col / 3,
-													) === Math.floor(c / 3)))}
-										class="cell"
-										style={`--r: ${r}; --c: ${c}`}
-										aria-label={`Row ${r + 1}, column ${c + 1}${value ? `, ${value}` : ", empty"}`}
+										class:number-match={highlightedNumber !== null &&
+											value === highlightedNumber}
+										class="cell"										style={`--r: ${r}; --c: ${c}`}										aria-label={`Row ${r + 1}, column ${c + 1}${value ? `, ${value}` : ", empty"}`}
 										onclick={() => selectCell(r, c)}
 										>{value || ""}</button
 									>
@@ -526,11 +544,18 @@
 							{#each [1, 2, 3, 4, 5, 6, 7, 8, 9] as number}
 								<button
 									class="number-key"
-									onclick={() => enterNumber(number)}
+									class:disabled={countNumberOnBoard(number) >= 9}
+									disabled={countNumberOnBoard(number) >= 9}
+									onclick={() => {
+										if (countNumberOnBoard(number) < 9) {
+											highlightedNumber = number;
+											enterNumber(number);
+										}
+									}}
 									>{number}</button
 								>
 							{/each}
-							
+
 							<button class="erase" onclick={clearCell}>Erase</button>
 						</div>
 
@@ -919,11 +944,19 @@
 		border: 1px solid #dce5df;
 		border-radius: 14px;
 		box-shadow: 0 14px 40px #234f3710;
+		transition: transform 0.2s ease, box-shadow 0.2s ease;
+	}
+	.board-wrap.win {
+		animation: winGlow 0.8s ease-in-out 2 alternate;
+	}
+	.board-wrap.lose {
+		animation: loseShake 0.4s ease-in-out 2;
 	}
 	.board {
+		width: min(100%, 620px);
 		aspect-ratio: 1;
 		display: grid;
-		grid-template-columns: repeat(9, 1fr);
+		grid-template-columns: repeat(9, minmax(0, 1fr));
 		border: 2px solid #37594d;
 		border-radius: 5px;
 		overflow: hidden;
@@ -932,16 +965,22 @@
 		position: relative;
 		display: grid;
 		place-items: center;
+		padding: 0;
+		margin: 0;
 		min-width: 0;
+		aspect-ratio: 1;
 		border: 0;
 		border-right: 1px solid #d6e1db;
 		border-bottom: 1px solid #d6e1db;
 		background: #fbfdfb;
 		color: #4e7665;
+		line-height: 1;
 		font:
 			500 clamp(16px, 2.6vw, 25px) "DM Mono",
 			monospace;
 		cursor: pointer;
+		width: 100%;
+		height: auto;
 	}
 	.cell:nth-child(3n) {
 		border-right: 1px solid #8ca69a;
@@ -971,8 +1010,10 @@
 		background: #fbe8e5;
 		box-shadow: inset 0 0 0 2px #e7a09a;
 	}
-	.cell.related {
-		background: #f3f8f2;
+	.cell.number-match {
+		background: #dfeeff !important;
+		color: #1d5ec7;
+		box-shadow: inset 0 0 0 2px #9fc2ff;
 	}
 	.cell.selected {
 		background: #dcecc6 !important;
@@ -981,6 +1022,10 @@
 	.cell.error.selected {
 		background: #f4c7c1 !important;
 		color: #963f3a;
+	}
+	.cell.number-match.selected {
+		background: #cfe0ff !important;
+		color: #174fb4;
 	}
 	.cell:hover {
 		background: #edf6e8;
@@ -1010,9 +1055,16 @@
 			500 12px "DM Mono",
 			monospace;
 	}
-	.number-key:hover {
+	.number-key:hover:not(:disabled) {
 		background: #e2eed3;
 		border-color: #bcd89b;
+	}
+	.number-key:disabled,
+	.number-key.disabled {
+		background: #ecefec;
+		border-color: #d2d8d4;
+		color: #a6b5af;
+		cursor: not-allowed;
 	}
 	.erase {
 		width: auto;
@@ -1032,17 +1084,21 @@
 		font-weight: 700;
 		cursor: pointer;
 		white-space: nowrap;
+		min-width: 150px;
+		height: 42px;
 	}
 	.check-button {
 		border: 0;
 		border-radius: 7px;
-		padding: 12px 17px;
+		padding: 11px 13px;
 		background: #1b4235;
 		color: #e0f6ad;
 		font-size: 11px;
 		font-weight: 700;
 		cursor: pointer;
 		white-space: nowrap;
+		min-width: 150px;
+		height: 42px;
 	}
 	.check-button span {
 		margin-left: 14px;
@@ -1062,6 +1118,24 @@
 	}
 	.message.success {
 		color: #709a51;
+		animation: winText 0.7s ease-in-out;
+	}
+	@keyframes winGlow {
+		0% { box-shadow: 0 0 0 rgba(121, 170, 88, 0); transform: scale(1); }
+		50% { box-shadow: 0 0 0 10px rgba(121, 170, 88, 0.12), 0 20px 50px rgba(121, 170, 88, 0.18); transform: scale(1.01); }
+		100% { box-shadow: 0 0 0 rgba(121, 170, 88, 0); transform: scale(1); }
+	}
+	@keyframes loseShake {
+		0%, 100% { transform: translateX(0); }
+		20% { transform: translateX(-6px); }
+		40% { transform: translateX(6px); }
+		60% { transform: translateX(-5px); }
+		80% { transform: translateX(5px); }
+	}
+	@keyframes winText {
+		0% { transform: scale(0.98); opacity: 0.6; }
+		50% { transform: scale(1.04); opacity: 1; }
+		100% { transform: scale(1); opacity: 1; }
 	}
 	.keyboard-hint {
 		margin: 19px 0 0;
