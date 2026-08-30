@@ -90,11 +90,11 @@
 	}
 
 	function ensurePuzzleMapKey(levelIndex, stepIndex) {
+		ensurePuzzlePool(levelIndex);
 		const saved = readSavedState();
 		if (!saved.puzzleMap) saved.puzzleMap = {};
 		const key = `${levelIndex}-${stepIndex}`;
 		if (!Number.isInteger(saved.puzzleMap[key])) {
-			ensurePuzzlePool(levelIndex);
 			const pool = saved.puzzleSeeds[levelIndex];
 			saved.puzzleMap[key] = Math.floor(Math.random() * pool.length);
 			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));

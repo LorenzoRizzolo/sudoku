@@ -160,6 +160,8 @@
 		<footer>
 			<span>Made for quiet moments. <button onclick={()=>{
 				localStorage.removeItem(STORAGE_KEY);
+				localStorage.setItem(STORAGE_KEY, JSON.stringify({ level: 0, completed: Array(6).fill(0).map(() => []) }));
+				location.reload();
 			}}>Reset progresses</button></span><span>Everything stays on this device <span class="lock">♢</span></span>
 		</footer>
 	</div>
