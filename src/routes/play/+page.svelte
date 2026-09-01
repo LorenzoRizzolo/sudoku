@@ -770,7 +770,7 @@
 		font-weight: 600;
 	}
 	.cell:not(.fixed):empty::after {
-		content: "·";
+		/* content: "·"; */
 		color: #c4d2cb;
 		font-size: 20px;
 	}
